@@ -162,17 +162,17 @@
           : clamp(((1 - k) * (T_DISP + 0.9) - tl.stag) / T_DISP, 0, 1);
         kk = phase === 1 ? smooth(local) : 1 - smooth(local);
       }
-      // wander (chaos) position
+      // wander (chaos) position — a remnant of drift/rotation stays alive even when formed
       var ax = Math.sin(t * 0.9 * tl.sp + tl.ph) * TILE * 1.6
              + Math.sin(t * 0.37 * tl.sp + tl.ph2) * TILE * 0.9;
       var ay = Math.cos(t * 0.8 * tl.sp + tl.ph2) * TILE * 1.6
              + Math.cos(t * 0.43 * tl.sp + tl.ph) * TILE * 0.9;
-      var x = lerp(tl.hx + ax, tl.hx, kk);
-      var y = lerp(tl.hy + ay, tl.hy, kk);
-      var rot = Math.sin(t * 1.1 * tl.sp + tl.ph) * 8 * (1 - kk);
-      // brightness: flicker in chaos, home brightness when formed
-      var flick = Math.pow(0.5 + 0.5 * Math.sin(t * 2.3 * tl.sp + tl.ph2 * 2), 3);
-      var cb = 0.10 + 0.55 * flick;
+      var x = lerp(tl.hx + ax, tl.hx + ax * 0.18, kk);
+      var y = lerp(tl.hy + ay, tl.hy + ay * 0.18, kk);
+      var rot = Math.sin(t * 1.1 * tl.sp + tl.ph) * 8 * (1 - kk * 0.7);
+      // brightness: sharp occasional flickers in chaos, home brightness when formed
+      var flick = Math.pow(0.5 + 0.5 * Math.sin(t * 2.3 * tl.sp + tl.ph2 * 2), 6);
+      var cb = 0.08 + 0.70 * flick;
       var b;
       if (phase === 2) {
         var shim = 0.90 + 0.10 * Math.sin(t * 2.0 - (tl.hx / W) * 6);
