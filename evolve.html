@@ -117,6 +117,20 @@
     COLS = clamp(Math.round(vw / 38), 26, 54);
     TILE = vw / COLS;
     ROWS = Math.ceil(vh / TILE);
+    // cap total tiles so low-end devices stay smooth
+    var MAXT = 2400;
+    if (COLS * ROWS > MAXT) {
+      var t2 = Math.sqrt((vw * vh) / MAXT);
+      COLS = clamp(Math.round(vw / t2), 24, 54);
+      TILE = vw / COLS;
+      ROWS = Math.ceil(vh / TILE);
+    }
+    // never smaller than a readable tile on phones
+    if (TILE < 26) {
+      COLS = Math.max(20, Math.floor(vw / 26));
+      TILE = vw / COLS;
+      ROWS = Math.ceil(vh / TILE);
+    }
     buildSprites();
     var cov = buildMask();
     tiles = [];
@@ -138,6 +152,7 @@
   }
 
   function frame(now) {
+    if (!running) return;
     requestAnimationFrame(frame);
     if (!ready) return;
     var t = now / 1000;
@@ -210,6 +225,15 @@
   window.addEventListener('resize', function () {
     clearTimeout(rto);
     rto = setTimeout(function () { if (ready) init(); }, 250);
+  });
+  // save battery: stop the loop when the tab is hidden, resume on return
+  var running = true;
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { running = false; }
+    else if (!running && ready && !reduced) {
+      running = true;
+      requestAnimationFrame(frame);
+    }
   });
 })();
 </script>
