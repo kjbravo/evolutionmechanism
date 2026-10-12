@@ -10,7 +10,12 @@
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body { height: 100%; background: #050508; overflow: hidden; }
-  canvas { display: block; width: 100vw; height: 100vh; }
+  #still {
+    position: fixed; inset: 0;
+    width: 100vw; height: 100vh; height: 100dvh;
+    object-fit: contain; background: #050508;
+  }
+  canvas { display: block; width: 100vw; height: 100vh; position: fixed; inset: 0; }
   .cap {
     position: fixed; bottom: 18px; left: 0; right: 0;
     text-align: center; color: rgba(255,255,255,0.28);
@@ -20,6 +25,7 @@
 </style>
 </head>
 <body>
+<img id="still" src="wall-art-mosaic.jpg" alt="e^x formed by hundreds of David icons">
 <canvas id="wall"></canvas>
 <div class="cap">EVOLUTION&nbsp;MECHANISM</div>
 <script>
@@ -204,6 +210,8 @@
 
   img.onload = function () {
     init();
+    var still = document.getElementById('still');
+    if (still) still.style.display = 'none';
     if (reduced) {
       // static formed frame for reduced motion
       ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
