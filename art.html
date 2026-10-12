@@ -9,26 +9,241 @@
 <link rel="apple-touch-icon" href="/apple-touch-icon.png">
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  html, body { height: 100%; background: #050508; }
-  body {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    min-height: 100vh;
-    min-height: 100dvh;
+  html, body { height: 100%; background: #050508; overflow: hidden; }
+  #still {
+    position: fixed; inset: 0;
+    width: 100vw; height: 100vh; height: 100dvh;
+    object-fit: contain; background: #050508;
   }
-  img {
-    display: block;
-    width: auto;
-    height: auto;
-    max-width: 100vw;
-    max-height: 100vh;
-    max-height: 100dvh;
-    object-fit: contain;
+  canvas { display: block; width: 100vw; height: 100vh; position: fixed; inset: 0; }
+  .cap {
+    position: fixed; bottom: 18px; left: 0; right: 0;
+    text-align: center; color: rgba(255,255,255,0.28);
+    font: 12px/1.4 -apple-system, sans-serif; letter-spacing: 0.35em;
+    pointer-events: none; user-select: none;
   }
 </style>
 </head>
 <body>
-  <img src="wall-art-mosaic.jpg" alt="e^x formed by hundreds of David icons">
+<img id="still" src="wall-art-mosaic.jpg" alt="e^x formed by hundreds of David icons">
+<canvas id="wall"></canvas>
+<div class="cap">EVOLUTION&nbsp;MECHANISM</div>
+<script>
+(function () {
+  'use strict';
+  var canvas = document.getElementById('wall');
+  var ctx = canvas.getContext('2d');
+  var DPR = Math.min(window.devicePixelRatio || 1, 1.5);
+  var W = 0, H = 0, TILE = 0, COLS = 0, ROWS = 0;
+  var tiles = [];
+  var sprites = []; // sprites[angleIdx][brightIdx]
+  var ANGLES = [-8, -4, 0, 4, 8];
+  var BRIGHTS = 10;
+  var img = new Image();
+  var ready = false;
+  var reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // loop timeline (seconds): chaos -> converge -> hold -> disperse
+  var T_CHAOS = 5, T_CONV = 3.5, T_HOLD = 3.5, T_DISP = 4;
+  var T_LOOP = T_CHAOS + T_CONV + T_HOLD + T_DISP;
+
+  function clamp(v, a, b) { return v < a ? a : (v > b ? b : v); }
+  function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+  function lerp(a, b, t) { return a + (b - a) * t; }
+
+  function buildMask() {
+    var S = 4; // supersample
+    var mw = COLS * S, mh = ROWS * S;
+    var mc = document.createElement('canvas');
+    mc.width = mw; mc.height = mh;
+    var m = mc.getContext('2d');
+    m.fillStyle = '#000'; m.fillRect(0, 0, mw, mh);
+    m.fillStyle = '#fff';
+    m.textBaseline = 'alphabetic';
+    var fs = Math.floor(mh * 0.62);
+    m.font = fs + 'px Georgia, "Times New Roman", serif';
+    var ew = m.measureText('e').width;
+    var xfs = Math.floor(fs * 0.52);
+    m.font = xfs + 'px Georgia, "Times New Roman", serif';
+    var xw = m.measureText('x').width;
+    var gap = -fs * 0.06;
+    var total = ew + gap + xw;
+    var x0 = (mw - total) / 2;
+    var baseY = mh * 0.5 + fs * 0.34;
+    m.font = fs + 'px Georgia, "Times New Roman", serif';
+    m.fillText('e', x0, baseY);
+    m.font = xfs + 'px Georgia, "Times New Roman", serif';
+    m.fillText('x', x0 + ew + gap, baseY - fs * 0.52);
+    var data = m.getImageData(0, 0, mw, mh).data;
+    var cov = new Float32Array(COLS * ROWS);
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var s = 0;
+        for (var dy = 0; dy < S; dy++) {
+          for (var dx = 0; dx < S; dx++) {
+            s += data[(((r * S + dy) * mw) + (c * S + dx)) * 4];
+          }
+        }
+        cov[r * COLS + c] = s / (S * S * 255);
+      }
+    }
+    return cov;
+  }
+
+  function buildSprites() {
+    sprites = [];
+    var pad = Math.ceil(TILE * 0.18);
+    var size = TILE + pad * 2;
+    for (var a = 0; a < ANGLES.length; a++) {
+      sprites.push([]);
+      for (var b = 0; b < BRIGHTS; b++) {
+        var cv = document.createElement('canvas');
+        cv.width = size * DPR; cv.height = size * DPR;
+        var g = cv.getContext('2d');
+        g.scale(DPR, DPR);
+        g.translate(size / 2, size / 2);
+        g.rotate(ANGLES[a] * Math.PI / 180);
+        var bright = 0.06 + 0.94 * (b / (BRIGHTS - 1));
+        g.globalAlpha = 1;
+        g.drawImage(img, -TILE / 2, -TILE / 2, TILE, TILE);
+        g.globalCompositeOperation = 'source-atop';
+        g.globalAlpha = 1 - bright;
+        g.fillStyle = '#000';
+        g.fillRect(-size / 2, -size / 2, size, size);
+        sprites[a].push({ c: cv, pad: pad });
+      }
+    }
+  }
+
+  function init() {
+    var vw = window.innerWidth, vh = window.innerHeight;
+    W = vw; H = vh;
+    canvas.width = Math.floor(vw * DPR);
+    canvas.height = Math.floor(vh * DPR);
+    COLS = clamp(Math.round(vw / 38), 26, 54);
+    TILE = vw / COLS;
+    ROWS = Math.ceil(vh / TILE);
+    // cap total tiles so low-end devices stay smooth
+    var MAXT = 2400;
+    if (COLS * ROWS > MAXT) {
+      var t2 = Math.sqrt((vw * vh) / MAXT);
+      COLS = clamp(Math.round(vw / t2), 24, 54);
+      TILE = vw / COLS;
+      ROWS = Math.ceil(vh / TILE);
+    }
+    // never smaller than a readable tile on phones
+    if (TILE < 26) {
+      COLS = Math.max(20, Math.floor(vw / 26));
+      TILE = vw / COLS;
+      ROWS = Math.ceil(vh / TILE);
+    }
+    buildSprites();
+    var cov = buildMask();
+    tiles = [];
+    var maxD = Math.sqrt(COLS * COLS + ROWS * ROWS) / 2;
+    for (var r = 0; r < ROWS; r++) {
+      for (var c = 0; c < COLS; c++) {
+        var dc = Math.sqrt(Math.pow(c - COLS / 2, 2) + Math.pow(r - ROWS / 2, 2));
+        tiles.push({
+          hx: c * TILE, hy: r * TILE,
+          hb: clamp(cov[r * COLS + c] * 1.25, 0, 1),
+          stag: (dc / maxD) * 0.9, // wave stagger 0..0.9s
+          ph: Math.random() * Math.PI * 2,
+          ph2: Math.random() * Math.PI * 2,
+          sp: 0.6 + Math.random() * 0.9
+        });
+      }
+    }
+    ready = true;
+  }
+
+  function frame(now) {
+    if (!running) return;
+    requestAnimationFrame(frame);
+    if (!ready) return;
+    var t = now / 1000;
+    var lt = t % T_LOOP;
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    ctx.fillStyle = '#050508';
+    ctx.fillRect(0, 0, W, H);
+
+    var phase, k; // k = formed amount 0..1
+    if (lt < T_CHAOS) { phase = 0; k = 0; }
+    else if (lt < T_CHAOS + T_CONV) { phase = 1; k = (lt - T_CHAOS) / T_CONV; }
+    else if (lt < T_CHAOS + T_CONV + T_HOLD) { phase = 2; k = 1; }
+    else { phase = 3; k = 1 - (lt - T_CHAOS - T_CONV - T_HOLD) / T_DISP; }
+
+    for (var i = 0; i < tiles.length; i++) {
+      var tl = tiles[i];
+      var kk;
+      if (phase === 0 || phase === 2) { kk = k; }
+      else {
+        var local = phase === 1
+          ? clamp((k * (T_CONV + 0.9) - tl.stag) / T_CONV, 0, 1)
+          : clamp(((1 - k) * (T_DISP + 0.9) - tl.stag) / T_DISP, 0, 1);
+        kk = phase === 1 ? smooth(local) : 1 - smooth(local);
+      }
+      // wander (chaos) position — a remnant of drift/rotation stays alive even when formed
+      var ax = Math.sin(t * 0.9 * tl.sp + tl.ph) * TILE * 1.6
+             + Math.sin(t * 0.37 * tl.sp + tl.ph2) * TILE * 0.9;
+      var ay = Math.cos(t * 0.8 * tl.sp + tl.ph2) * TILE * 1.6
+             + Math.cos(t * 0.43 * tl.sp + tl.ph) * TILE * 0.9;
+      var x = lerp(tl.hx + ax, tl.hx + ax * 0.18, kk);
+      var y = lerp(tl.hy + ay, tl.hy + ay * 0.18, kk);
+      var rot = Math.sin(t * 1.1 * tl.sp + tl.ph) * 8 * (1 - kk * 0.7);
+      // brightness: sharp occasional flickers in chaos, home brightness when formed
+      var flick = Math.pow(0.5 + 0.5 * Math.sin(t * 2.3 * tl.sp + tl.ph2 * 2), 6);
+      var cb = 0.08 + 0.70 * flick;
+      var b;
+      if (phase === 2) {
+        var shim = 0.90 + 0.10 * Math.sin(t * 2.0 - (tl.hx / W) * 6);
+        b = tl.hb * shim;
+      } else {
+        b = lerp(cb, tl.hb, kk);
+      }
+      var ai = clamp(Math.round((rot + 8) / 16 * (ANGLES.length - 1)), 0, ANGLES.length - 1);
+      var bi = clamp(Math.round(b * (BRIGHTS - 1)), 0, BRIGHTS - 1);
+      var sp = sprites[ai][bi];
+      ctx.drawImage(sp.c, x - sp.pad, y - sp.pad, TILE + sp.pad * 2, TILE + sp.pad * 2);
+    }
+  }
+
+  img.onload = function () {
+    init();
+    var still = document.getElementById('still');
+    if (still) still.style.display = 'none';
+    if (reduced) {
+      // static formed frame for reduced motion
+      ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+      ctx.fillStyle = '#050508';
+      ctx.fillRect(0, 0, W, H);
+      for (var i = 0; i < tiles.length; i++) {
+        var tl = tiles[i];
+        var bi = clamp(Math.round(tl.hb * (BRIGHTS - 1)), 0, BRIGHTS - 1);
+        var sp = sprites[2][bi];
+        ctx.drawImage(sp.c, tl.hx - sp.pad, tl.hy - sp.pad, TILE + sp.pad * 2, TILE + sp.pad * 2);
+      }
+      return;
+    }
+    requestAnimationFrame(frame);
+  };
+  img.src = 'apple-touch-icon.png';
+
+  var rto;
+  window.addEventListener('resize', function () {
+    clearTimeout(rto);
+    rto = setTimeout(function () { if (ready) init(); }, 250);
+  });
+  // save battery: stop the loop when the tab is hidden, resume on return
+  var running = true;
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { running = false; }
+    else if (!running && ready && !reduced) {
+      running = true;
+      requestAnimationFrame(frame);
+    }
+  });
+})();
+</script>
 </body>
 </html>
